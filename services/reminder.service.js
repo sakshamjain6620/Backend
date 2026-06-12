@@ -18,15 +18,9 @@ const sendAppointmentReminder = (appointment, patient, doctor) => {
     const reminderId = uuidv4();
     const message = `Hello ${patient.name}, your appointment with Dr. ${doctor.name} (${doctor.specialization}) is confirmed for ${appointment.appointment_date} at ${appointment.appointment_time}. Your Token Number is: ${appointment.token_no || 'Will be assigned'}. Appointment Code: ${appointment.appointment_code || 'N/A'}. Thank you for choosing SwasthSetu!`;
     
-    // Save to Database as pending for WhatsApp background job
-    db.prepare(`
-        INSERT INTO reminders (id, patient_id, appointment_id, reminder_type, message, scheduled_time, status, sent_via)
-        VALUES (?, ?, ?, 'appointment', ?, ?, 'pending', 'whatsapp')
-    `).run(reminderId, patient.id, appointment.id, message, new Date().toISOString());
-
     mockSendEmail(patient.email, 'Appointment Confirmation - SwasthSetu', message);
 
-    return { id: reminderId, status: 'pending', sent_via: 'whatsapp' };
+    return { id: reminderId, status: 'sent_instantly', sent_via: 'email' };
 };
 
 const sendMedicineReminder = (routine, patient, medicineName, dosage, timing) => {

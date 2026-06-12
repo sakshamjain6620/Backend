@@ -18,7 +18,7 @@ const adminRoutes = require('./routes/admin.routes');
 const doctorRoutes = require('./routes/doctor.routes');
 
 // Services
-const { initializeWhatsAppClient, sendWhatsAppMessage } = require('./services/whatsapp.service');
+const { initializeWhatsAppClient } = require('./services/whatsapp.service');
 
 // Middleware
 const { notFound, errorHandler } = require('./middleware/error.middleware');
@@ -115,44 +115,7 @@ app.listen(PORT, "0.0.0.0", () => {
     });
 
     // ---------------- BACKGROUND JOB ----------------
-    setInterval(async () => {
-        try {
-            const now = new Date().toISOString();
-
-            let pendingReminders = [];
-
-            try {
-                pendingReminders = db.prepare(`
-                    SELECT r.*, p.name as patient_name, p.phone as patient_phone
-                    FROM reminders r
-                    JOIN patients p ON r.patient_id = p.id
-                    WHERE r.status = 'pending' AND r.scheduled_time <= ?
-                    LIMIT 20
-                `).all(now);
-            } catch (dbErr) {
-                console.error("DB error:", dbErr.message);
-                return;
-            }
-
-            if (!pendingReminders.length) return;
-
-            for (const reminder of pendingReminders) {
-                try {
-                    await sendWhatsAppMessage(
-                        reminder.patient_phone,
-                        reminder.message
-                    );
-
-                    db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?")
-                        .run(reminder.id);
-
-                } catch (err) {
-                    console.error("Reminder send failed:", err.message);
-                }
-            }
-
-        } catch (err) {
-            console.error("Background job error:", err.message);
-        }
-    }, 30000);
+    // Initialize Node-Cron Scheduler
+    const { initCronJobs } = require('./services/scheduler.service');
+    initCronJobs();
 });
