@@ -35,7 +35,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// -------------------- ROOT + HEALTH --------------------
+// -------------------- ROOT --------------------
 app.get('/', (req, res) => {
     res.json({
         success: true,
@@ -44,6 +44,7 @@ app.get('/', (req, res) => {
     });
 });
 
+// -------------------- STATUS --------------------
 app.get('/api/status', (req, res) => {
     res.json({
         success: true,
@@ -69,19 +70,30 @@ app.use('/api/doctors', doctorRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-// -------------------- START SERVER --------------------
+// -------------------- SERVER START --------------------
 app.listen(PORT, "0.0.0.0", () => {
     console.log("==================================================");
     console.log(`🚀 Server started on port ${PORT}`);
-    console.log(`👉 http://localhost:${PORT}`);
     console.log("==================================================");
 
-    // ---------------- WhatsApp Init ----------------
-    initializeWhatsAppClient()
-        .then(() => console.log("✅ WhatsApp initialized"))
-        .catch(err => console.error("⚠️ WhatsApp init failed:", err.message));
+    // ---------------- FIXED WHATSAPP INIT ----------------
+    try {
+        const result = initializeWhatsAppClient();
 
-    // ---------------- Slot Generation (non-blocking) ----------------
+        // SAFE CHECK: only use .then if it is a Promise
+        if (result && typeof result.then === "function") {
+            result
+                .then(() => console.log("✅ WhatsApp initialized"))
+                .catch(err => console.error("⚠️ WhatsApp init failed:", err.message));
+        } else {
+            console.log("✅ WhatsApp initialized (sync mode)");
+        }
+
+    } catch (err) {
+        console.error("⚠️ WhatsApp init crashed:", err.message);
+    }
+
+    // ---------------- SLOT GENERATION ----------------
     setImmediate(() => {
         try {
             const { generateSlotsForNext30Days } = require('./utils/slotGenerator');
@@ -92,17 +104,17 @@ app.listen(PORT, "0.0.0.0", () => {
                 try {
                     generateSlotsForNext30Days(doc);
                 } catch (err) {
-                    console.error("Slot generation error for doctor:", err.message);
+                    console.error("Slot error:", err.message);
                 }
             });
 
-            console.log("✅ Slot generation completed");
+            console.log("✅ Slots generated successfully");
         } catch (err) {
-            console.error("⚠️ Slot generation startup failed:", err.message);
+            console.error("⚠️ Slot generation failed:", err.message);
         }
     });
 
-    // ---------------- BACKGROUND REMINDER JOB ----------------
+    // ---------------- BACKGROUND JOB ----------------
     setInterval(async () => {
         try {
             const now = new Date().toISOString();
@@ -115,11 +127,10 @@ app.listen(PORT, "0.0.0.0", () => {
                     FROM reminders r
                     JOIN patients p ON r.patient_id = p.id
                     WHERE r.status = 'pending' AND r.scheduled_time <= ?
-                    ORDER BY r.scheduled_time ASC
                     LIMIT 20
                 `).all(now);
             } catch (dbErr) {
-                console.error("❌ Reminder DB error:", dbErr.message);
+                console.error("DB error:", dbErr.message);
                 return;
             }
 
@@ -127,51 +138,21 @@ app.listen(PORT, "0.0.0.0", () => {
 
             for (const reminder of pendingReminders) {
                 try {
-                    console.log(`📱 Sending WhatsApp to ${reminder.patient_phone}`);
-
                     await sendWhatsAppMessage(
                         reminder.patient_phone,
                         reminder.message
                     );
 
-                    db.prepare(
-                        "UPDATE reminders SET status = 'sent' WHERE id = ?"
-                    ).run(reminder.id);
-
-                    // Optional follow-up warning
-                    if (
-                        reminder.reminder_type === 'medicine' &&
-                        !reminder.message.includes('WARNING:')
-                    ) {
-                        const { v4: uuidv4 } = require('uuid');
-
-                        const warningTime = new Date();
-                        warningTime.setHours(warningTime.getHours() + 1);
-
-                        db.prepare(`
-                            INSERT INTO reminders (
-                                id, patient_id, appointment_id,
-                                reminder_type, message,
-                                scheduled_time, status, sent_via, routine_id
-                            )
-                            VALUES (?, ?, ?, 'medicine', ?, ?, 'pending', 'whatsapp', ?)
-                        `).run(
-                            uuidv4(),
-                            reminder.patient_id,
-                            reminder.appointment_id,
-                            `WARNING: You have not taken your medicine yet! ${reminder.message}`,
-                            warningTime.toISOString(),
-                            reminder.routine_id
-                        );
-                    }
+                    db.prepare("UPDATE reminders SET status = 'sent' WHERE id = ?")
+                        .run(reminder.id);
 
                 } catch (err) {
-                    console.error("❌ Reminder send failed:", err.message);
+                    console.error("Reminder send failed:", err.message);
                 }
             }
 
         } catch (err) {
-            console.error("❌ Background job error:", err.message);
+            console.error("Background job error:", err.message);
         }
     }, 30000);
 });
