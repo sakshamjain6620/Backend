@@ -35,7 +35,15 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// -------------------- STATUS ROUTE --------------------
+// -------------------- ROOT + HEALTH --------------------
+app.get('/', (req, res) => {
+    res.json({
+        success: true,
+        message: "SwasthSetu API is running",
+        timestamp: new Date()
+    });
+});
+
 app.get('/api/status', (req, res) => {
     res.json({
         success: true,
@@ -61,43 +69,59 @@ app.use('/api/doctors', doctorRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-// -------------------- SERVER START --------------------
-app.listen(PORT, () => {
-    console.log(`==================================================`);
-    console.log(`🚀 SwasthSetu Server started on port ${PORT}`);
+// -------------------- START SERVER --------------------
+app.listen(PORT, "0.0.0.0", () => {
+    console.log("==================================================");
+    console.log(`🚀 Server started on port ${PORT}`);
     console.log(`👉 http://localhost:${PORT}`);
-    console.log(`==================================================`);
+    console.log("==================================================");
 
-    // WhatsApp init (safe)
-    try {
-        initializeWhatsAppClient();
-    } catch (err) {
-        console.error("⚠️ WhatsApp init failed:", err.message);
-    }
+    // ---------------- WhatsApp Init ----------------
+    initializeWhatsAppClient()
+        .then(() => console.log("✅ WhatsApp initialized"))
+        .catch(err => console.error("⚠️ WhatsApp init failed:", err.message));
 
-    // Generate slots for all doctors on startup
-    try {
-        const { generateSlotsForNext30Days } = require('./utils/slotGenerator');
-        const allDocs = db.prepare("SELECT * FROM doctors").all();
-        allDocs.forEach(doc => generateSlotsForNext30Days(doc));
-        console.log("✅ Populated missing manual slots for all doctors.");
-    } catch (err) {
-        console.error("⚠️ Failed to generate slots on startup:", err.message);
-    }
+    // ---------------- Slot Generation (non-blocking) ----------------
+    setImmediate(() => {
+        try {
+            const { generateSlotsForNext30Days } = require('./utils/slotGenerator');
 
-    // -------------------- BACKGROUND JOB --------------------
+            const allDocs = db.prepare("SELECT * FROM doctors").all();
+
+            allDocs.forEach(doc => {
+                try {
+                    generateSlotsForNext30Days(doc);
+                } catch (err) {
+                    console.error("Slot generation error for doctor:", err.message);
+                }
+            });
+
+            console.log("✅ Slot generation completed");
+        } catch (err) {
+            console.error("⚠️ Slot generation startup failed:", err.message);
+        }
+    });
+
+    // ---------------- BACKGROUND REMINDER JOB ----------------
     setInterval(async () => {
         try {
             const now = new Date().toISOString();
 
-            const pendingReminders = db.prepare(`
-                SELECT r.*, p.name as patient_name, p.phone as patient_phone
-                FROM reminders r
-                JOIN patients p ON r.patient_id = p.id
-                WHERE r.status = 'pending' AND r.scheduled_time <= ?
-                ORDER BY r.scheduled_time ASC
-                LIMIT 20
-            `).all(now);
+            let pendingReminders = [];
+
+            try {
+                pendingReminders = db.prepare(`
+                    SELECT r.*, p.name as patient_name, p.phone as patient_phone
+                    FROM reminders r
+                    JOIN patients p ON r.patient_id = p.id
+                    WHERE r.status = 'pending' AND r.scheduled_time <= ?
+                    ORDER BY r.scheduled_time ASC
+                    LIMIT 20
+                `).all(now);
+            } catch (dbErr) {
+                console.error("❌ Reminder DB error:", dbErr.message);
+                return;
+            }
 
             if (!pendingReminders.length) return;
 
@@ -147,7 +171,7 @@ app.listen(PORT, () => {
             }
 
         } catch (err) {
-            console.error('❌ Background reminder error:', err.message);
+            console.error("❌ Background job error:", err.message);
         }
     }, 30000);
 });
