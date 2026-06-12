@@ -1,7 +1,6 @@
 const db = require('../config/db');
 const { createOrder, verifySignature } = require('../services/razorpay.service');
 const { sendAppointmentReminder } = require('../services/reminder.service');
-const { sendWhatsAppMessage } = require('../services/whatsapp.service');
 const { v4: uuidv4 } = require('uuid');
 
 const generatePaymentOrder = async (req, res, next) => {
@@ -101,11 +100,11 @@ const verifyPayment = async (req, res, next) => {
                 appointment.appointment_code = appointmentCode;
             }
 
-            // Send WhatsApp confirmation with payment success and token number
-            const waMsg = `✅ Payment confirmed! Your appointment with Dr. ${doctor.name} on ${appointment.appointment_date} at ${appointment.appointment_time} is booked.\n\n🎫 Token No: ${tokenNo}\n📋 Code: ${appointment.appointment_code}\n\nPlease arrive 10 minutes before your slot. - SwasthSetu`;
-            sendWhatsAppMessage(patient.phone, waMsg);
+            // Send WhatsApp confirmation instantly via Notification Service
+            const { sendAppointmentConfirmationMessage } = require('../services/notification.service');
+            sendAppointmentConfirmationMessage(appointment, patient, doctor);
 
-            // Send Appointment reminder on WhatsApp and Email
+            // Send Appointment reminder Email (Mock)
             sendAppointmentReminder(appointment, patient, doctor);
 
             return res.json({
